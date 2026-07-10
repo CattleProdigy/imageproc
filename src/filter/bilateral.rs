@@ -1,6 +1,6 @@
 //! Bilateral Filter and associated items.
 
-use image::{GenericImage, Pixel};
+use image::{GenericImage, Luma, Pixel, Rgb, Rgba};
 use num::cast::AsPrimitive;
 
 use crate::definitions::Image;
@@ -53,6 +53,74 @@ where
             .sum::<f32>();
 
         fast_exp_negative(-0.5 * euclidean_distance_squared / self.sigma_squared)
+    }
+}
+
+/// A gaussian function of the euclidean distance between two pixel's colors, implemented using
+/// a look up table. This gives substantial speed up for pixel's with a u8 subpixel.
+///
+/// This implements [`ColorDistance`].
+pub struct LutGaussianEuclideanColorDistance {
+    lut: Vec<f32>,
+}
+
+impl LutGaussianEuclideanColorDistance {
+    /// Creates a new [`GaussianEuclideanColorDistance`] using a given sigma value, which
+    /// must be positive.
+    ///
+    /// Internally, this is stored as sigma squared for performance.
+    ///
+    /// # Panics
+    ///
+    /// 1. If `sigma <= 0`
+    pub fn new(sigma: f32) -> Self {
+        assert!(
+            sigma > 0.0,
+            "GaussianEuclideanColorDistance sigma must be positive"
+        );
+        let mut lut = Vec::with_capacity(512);
+        for diff in 0..512 {
+            let diff = (diff - 255) as f32;
+            let weight = fast_exp_negative(-0.5 * diff.powi(2) / sigma.powi(2));
+            lut.push(weight);
+        }
+        Self { lut }
+    }
+}
+
+impl ColorDistance<Luma<u8>> for LutGaussianEuclideanColorDistance {
+    #[inline(always)]
+    fn color_distance(&self, pixel1: &Luma<u8>, pixel2: &Luma<u8>) -> f32 {
+        let diff = (255 + pixel1.0[0] as usize) - pixel2.0[0] as usize;
+        self.lut[diff]
+    }
+}
+
+impl ColorDistance<Rgb<u8>> for LutGaussianEuclideanColorDistance {
+    #[inline(always)]
+    fn color_distance(&self, pixel1: &Rgb<u8>, pixel2: &Rgb<u8>) -> f32 {
+        let diffr = (255 + pixel1.0[0] as usize) - pixel2.0[0] as usize;
+        let diffg = (255 + pixel1.0[1] as usize) - pixel2.0[1] as usize;
+        let diffb = (255 + pixel1.0[2] as usize) - pixel2.0[2] as usize;
+        let lutr = self.lut[diffr];
+        let lutg = self.lut[diffg];
+        let lutb = self.lut[diffb];
+        lutr * lutg * lutb
+    }
+}
+
+impl ColorDistance<Rgba<u8>> for LutGaussianEuclideanColorDistance {
+    #[inline(always)]
+    fn color_distance(&self, pixel1: &Rgba<u8>, pixel2: &Rgba<u8>) -> f32 {
+        let diffr = (255 + pixel1.0[0] as usize) - pixel2.0[0] as usize;
+        let diffg = (255 + pixel1.0[1] as usize) - pixel2.0[1] as usize;
+        let diffb = (255 + pixel1.0[2] as usize) - pixel2.0[2] as usize;
+        let diffa = (255 + pixel1.0[3] as usize) - pixel2.0[3] as usize;
+        let lutr = self.lut[diffr];
+        let lutg = self.lut[diffg];
+        let lutb = self.lut[diffb];
+        let luta = self.lut[diffa];
+        lutr * lutg * lutb * luta
     }
 }
 
